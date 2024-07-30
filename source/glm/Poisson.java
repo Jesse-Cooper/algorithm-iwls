@@ -1,150 +1,218 @@
 package glm;
 
 
-/**
- * Poisson distribution General Linear Model (GLM) for a fill rank model.
- *
- * <ul>
- *     <li> Uses the log function as a link function (log-linear regression).
- *     <li> Performs Iterative reWeighted Least Squares (IWLS) to find the linear coefficients of the explanatory
- *          variables.
- * </ul>
- */
-public class Poisson extends Distribution {
+import java.lang.Math;
 
-    private static final double NORMALISATION_EPSILON = 0.00001;
+
+/**
+ * Poisson General Linear Model (GLM)
+
+ * Uses the log function as a link function
+     * `g(x) = log_e(x)`
+     * Log function is the canonical link for Poisson
+     * Models fitted are log-linear regression models
+ */
+public class Poisson extends Distribution
+{
+    // * Used to prevent zero division errors when using the expected values of
+    //   the observations (`mus`)
+    private static final double NORMALISATION_EPSILON = 1e-4;
+
+    private static final String DISTRIBUTION_NAME = "Poisson";
+    private static final String LINK_FUNC_NAME = "Log function";
 
 
     /**
-     * Instantiates and fits a Poisson distribution General Linear Model (GLM).
-     *
-     * @param ys Response variable vector.
-     * @param xs Explanatory variable matrix.
-     * @throws ArithmeticException Distribution data must be in a valid mathematical form for GLM.
-     *                             <ul>
-     *                                 <li> `ys` and `xs` must have the same number of rows.
-     *                                 <li> `ys` must be a vector (single column).
-     *                                 <li> `xs` cannot have more columns than rows.
-     *                                 <li> `ys` must be non-negative (not checked, but will cause errors).
-     *                             </ul>
+     * Instantiates and fits a Poisson GLM
+
+     * @param ys
+         * Response vector
+     * @param xs
+         * Explanatory matrix
      */
-    public Poisson(Matrix ys, Matrix xs) throws ArithmeticException {
-        super(ys, xs);
+    public Poisson(
+        final Matrix ys,
+        final Matrix xs)
+    {
+        super(ys, xs, DISTRIBUTION_NAME, LINK_FUNC_NAME);
         super.estiBetas();
     }
 
 
-    /*
-     * Calculates the eta vector using the link function.
-     *
-     * Uses log function as link function.
-     * eta = g(mu) = log(mu).
-     *
-     * @param mus Current expected value vector.
-     * @return Eta vector.
+    /**
+     * Calculates the current linear predictor of each observation (`etas`) from
+       the current expected value of each observation (`mus`) using the link
+       function
+
+     * `etas = g(mus) = log_e(mus)`
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current linear predictor of each observation (`etas`)
      */
-     Matrix linkFunc(Matrix mus) {
-        return mus.getMap(Math::log);
+    Matrix linkFunc(final Matrix mus)
+    {
+        return mus.mapMatrix(Math::log);
     }
 
 
-    /*
-     * Calculates the result of link function derivative.
-     *
-     * Uses log function as link function.
-     * g'(mu) = 1 / mu.
-     * `mus` is normalised to prevent a zero division error.
-     *
-     * @param mus Current expected value vector.
-     * @return Result of link function derivative.
+    /**
+     * Calculates the current link function derivative from the current expected
+       value of each observation (`mus`)
+
+     * `g'(mus) = 1 / mus`
+     * Expected values in `mus` are normalised to prevent zero division errors
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current value of the link function derivative
      */
-     Matrix linkFuncDiff(Matrix mus) {
-        mus = mus.getMap(Poisson::muNormalisation);
-        return mus.getMap(mu -> 1 / mu);
+    Matrix linkFuncDiff(Matrix mus)
+    {
+        mus = mus.mapMatrix(Poisson::muNormalisation);
+        return mus.mapMatrix(mu -> 1 / mu);
     }
 
 
-    /*
-     * Calculates the expected value vector using the link function inverse.
-     *
-     * Uses log function as link function.
-     * mu = g^(-1)(eta) = e^(eta).
-     *
-     * @param etas Current eta vector.
-     *                 eta = g(mu) = X * beta
-     * @return Expected value vector.
+    /**
+     * Calculates the current expected value of each observation (`mus`) from
+       the current linear predictor of each observation (`etas`) using the link
+       function inverse
+
+     * `mus = g^(-1)(etas) = e^(etas)`
+
+     * @param etas
+         * Current linear predictor of each observation
+         * `etas = xs * betas`
+     * @return
+         * Current expected value of each observation (`mus`)
      */
-     Matrix linkFuncInv(Matrix etas) {
-        return etas.getMap(Math::exp);
+    Matrix linkFuncInv(final Matrix etas)
+    {
+        return etas.mapMatrix(Math::exp);
     }
 
 
-    /*
-     * Calculates the result of variance function.
-     *
-     * Uses log function as link function.
-     * v(mu) = b''(b'^(-1)(mu)) = mu.
-     * `mus` is normalised to prevent a zero division error.
-     *
-     * @param mus Current expected value vector.
-     * @return Result of variance function.
+    /**
+     * Calculates the current variance function from the current expected value
+       of each observation (`mus`)
+
+     * Variance function is the effect of an expected value on its observation's
+       variance
+     * `v(mus) = b''(b'^(-1)(mus)) = mus`
+     * Expected values in `mus` are normalised to prevent zero division errors
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current value of the variance function
      */
-     Matrix varFunc(Matrix mus) {
-        mus = mus.getMap(Poisson::muNormalisation);
+    Matrix varFunc(Matrix mus)
+    {
+        mus = mus.mapMatrix(Poisson::muNormalisation);
         return mus;
     }
 
 
-    /*
-     * Calculates the log likelihood.
-     *
-     * Uses log function as link function.
-     * The log factorial component is included even though it cancels out when comparing log likelihoods.
-     * logLike = y * log(mu) - mu - log(y!).
-     *
-     * @param ys Response vector.
-     * @param mus Expected values vector.
-     * @return Log likelihood.
+    /**
+     * Calculates the current log-likelihood of the current model parameters
+
+     * `logLike = sum(ys * log_e(mus) - mus - C)`
+         * `C = log_e(ys!)`
+     * Constant term (`C`) is included even though it cancels out when comparing
+       log-likelihoods
+
+     * @param ys
+         * Response vector
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current log-likelihood of the current model parameters
      */
-     double logLike(Matrix ys, Matrix mus) {
-        Matrix logProbs = ys.getZip(mus, (y, mu) -> y * Math.log(mu) - mu - Poisson.logFactorial(y.intValue()));
-        return logProbs.getFoldVec(Double::sum, 0.0);
+    double logLike(
+        final Matrix ys ,
+        final Matrix mus)
+    {
+        final Matrix logProbs;
+
+        logProbs = ys.zipMatrix(mus, Poisson::singleLogLike);
+        return logProbs.foldVec(Double::sum, 0.0);
     }
 
 
-    /*
-     * Prevents `mu` (expected value) from being exactly zero.
-     *
-     * @param mu Single expected value for an observation.
-     * @return Normalised `mu`.
+    /**
+     * Prevents the current expected value of an observation (`mu`) from being
+       `0`
+
+     * @param mu
+         * Current expected value of an observation
+     * @return
+         * Normalised `mu`
      */
-    private static double muNormalisation(double mu) {
-        // exact float comparison as error only occurs when exactly zero
-        if (mu == 0) {
+    private static double muNormalisation(double mu)
+    {
+        // * Compare floats exactly as the error only occurs when exactly `0`
+        if (mu == 0)
+        {
             mu += NORMALISATION_EPSILON;
         }
         return mu;
     }
 
 
-    /*
-     * Calculates the log factorial.
-     *
-     * @param number The n'th log factorial to calculate.
-     * @return `number` log factorial.
-     * @throws ArithmeticException Factorials only exist for non-negatives.
-     */
-    private static double logFactorial(int number) throws ArithmeticException {
+    /**
+     * Calculates the current log-likelihood of a single observation
 
-        if (number < 0) {
-            throw new ArithmeticException("Cannot get the factorial of a negative number.");
+     * @param y
+         * Observation to calculate log-likelihood of
+     * @param mu
+         * Current expected value of observation `y`
+     * @return
+         * Current log-likelihood of `y`
+     */
+    private static double singleLogLike(
+        final double y ,
+        final double mu)
+    {
+        return y * Math.log(mu) - mu - logFactorial(y);
+    }
+
+
+    /**
+     * Calculates the log_e factorial
+
+     * @param number
+         * n'th log_e factorial to calculate
+     * @return
+         * `number` log_e factorial
+     * @throws ArithmeticException
+         * Cannot get the factorial of a negative number
+         * `number >= 0`
+     */
+    private static double logFactorial(
+        final double number)
+    throws ArithmeticException
+    {
+        int factor;
+        double result;
+
+        if (number < 0)
+        {
+            throw new ArithmeticException(
+                "\n\n"
+                + "* Cannot get the factorial of a negative number\n"
+                + "* `number` must be non-negative\n"
+                + "* `number = " + number + "`\n"
+            );
         }
 
-        double result = Math.log(1);
-        for (int factor = 2; factor <= number; factor++) {
+        result = 0;
+        for (factor = 2; factor <= number; factor += 1)
+        {
             result += Math.log(factor);
         }
-
         return result;
     }
 }
