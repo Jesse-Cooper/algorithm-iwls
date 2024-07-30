@@ -1,5 +1,4 @@
 import glm.Binomial;
-import glm.Gaussian;
 import glm.Matrix;
 import glm.Poisson;
 
