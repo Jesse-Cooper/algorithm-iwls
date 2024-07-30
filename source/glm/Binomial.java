@@ -1,49 +1,73 @@
 package glm;
 
 
+import java.lang.Math;
+
+
 /**
- * Binomial distribution General Linear Model (GLM) for a fill rank model.
- *
- * <ul>
- *     <li> Uses the logistic function as a link function (logistic regression).
- *     <li> Performs Iterative reWeighted Least Squares (IWLS) to find the linear coefficients of the explanatory
- *          variables.
- * </ul>
+ * Binomial General Linear Model (GLM)
+
+ * Uses the logistic function as a link function
+     * `g(x) = 1 / (1 + e^(-x))`
+     * Logistic function is the canonical link for Binomial
+     * Models fitted are logistic regression models
  */
-public class Binomial extends Distribution {
+public class Binomial extends Distribution
+{
+    // * Used to prevent zero division errors when using the expected values of
+    //   the observations (`mus`)
+    private static final double NORMALISATION_EPSILON = 1e-4;
 
-    private static final double NORMALISATION_EPSILON = 0.00001;
+    private static final String DISTRIBUTION_NAME = "Binomial";
+    private static final String LINK_FUNC_NAME = "Logistic function";
 
-    // binomial distribution requires an extra parameter (number of trails per observation)
+
+    // * Binomials require an extra parameter
+    // * Number of trails per observation
+    // * For a single observation: `m = successes + failures = y + failures`
     private final Matrix ms;
 
 
     /**
-     * Instantiates and fits Binomial distribution General Linear Model (GLM).
-     *
-     * @param ys Response variable vector.
-     * @param xs Explanatory variable matrix.
-     * @param ms Trails per response vector observation.
-     * @throws ArithmeticException Distribution data must be in a valid mathematical form for GLM.
-     *                             <ul>
-     *                                 <li> `ys` and `xs` must have the same number of rows.
-     *                                 <li> `ys` must be a vector (single column).
-     *                                 <li> `xs` cannot have more columns than rows.
-     *                                 <li> `ys` and `ms` must have the same number of rows.
-     *                                 <li> `ms` must be a vector (single column).
-     *                                 <li> `ys` must be non-negative no larger than `ms` (not checked, but will cause
-     *                                       errors).
-     *                             </ul>
-     */
-    public Binomial(Matrix ys, Matrix xs, Matrix ms) throws ArithmeticException {
-        super(ys, xs);
+     * Instantiates and fits a Binomial GLM
 
-        if (ys.getNRows() != ms.getNRows()) {
-            throw new ArithmeticException("`ys` and `ms` must have the same number of rows.");
+     * @param ys
+         * Response vector
+         * Number of successes per observation
+     * @param xs
+         * Explanatory matrix
+     * @param ms
+         * Number of trails per observation
+     * @throws ArithmeticException
+         * `ms` must be a vector
+     * @throws ArithmeticException
+         * `ys` and `ms` must have the same number of elements
+     */
+    public Binomial(
+        final Matrix ys,
+        final Matrix xs,
+        final Matrix ms)
+    throws ArithmeticException
+    {
+        super(ys, xs, DISTRIBUTION_NAME, LINK_FUNC_NAME);
+
+        if (!ms.isVector())
+        {
+            throw new ArithmeticException(
+                "\n\n"
+                + "* `ms` must be a vector\n"
+                + "* `ms` has " + ms.getNCols() + " columns\n"
+            );
         }
 
-        if (ms.getNCols() != 1) {
-            throw new ArithmeticException("`ms` must be a vector (single column).");
+        if (ys.getNRows() != ms.getNRows())
+        {
+            throw new ArithmeticException(
+                "\n\n"
+                + "* `ys` and `ms` must have the same number of elements\n"
+                + "* `ys` has " + ys.getNRows() + " elements\n"
+                + "* `ms` has " + ms.getNRows() + " elements\n"
+            );
         }
 
         this.ms = ms;
@@ -52,114 +76,161 @@ public class Binomial extends Distribution {
     }
 
 
-    /*
-     * Calculates the eta vector using the link function.
-     *
-     * Uses logistic function as link function.
-     * eta = g(mu) = log(mu) - log(m - mu).
-     * `mus` is normalised to prevent a zero division error.
-     *
-     * @param mus Current expected value vector.
-     * @return Eta vector.
+    /**
+     * Calculates the current linear predictor of each observation (`etas`) from
+       the current expected value of each observation (`mus`) using the link
+       function
+
+     * `etas = g(mus) = log_e(mus) - log_e(ms - mus)`
+     * Expected values in `mus` are normalised to prevent zero division errors
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current linear predictor of each observation (`etas`)
      */
-     Matrix linkFunc(Matrix mus) {
-        mus = mus.getZip(ms, Binomial::muNormalisation);
-        return mus.getZip(ms, (mu, m) -> Math.log(mu) - Math.log(m - mu));
+    Matrix linkFunc(Matrix mus)
+    {
+        mus = mus.zipMatrix(ms, Binomial::muNormalisation);
+        return mus.zipMatrix(ms, (mu, m) -> Math.log(mu) - Math.log(m - mu));
     }
 
 
-    /*
-     * Calculates the result of link function derivative.
-     *
-     * Uses logistic function as link function.
-     * g'(mu) = m / (mu * (m - mu)).
-     * `mus` is normalised to prevent a zero division error.
-     *
-     * @param mus Current expected value vector.
-     * @return Result of link function derivative.
+    /**
+     * Calculates the current link function derivative from the current expected
+       value of each observation (`mus`)
+
+     * `g'(mus) = ms / (mus * (ms - mus))`
+     * Expected values in `mus` are normalised to prevent zero division errors
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current value of the link function derivative
      */
-     Matrix linkFuncDiff(Matrix mus) {
-        mus = mus.getZip(ms, Binomial::muNormalisation);
-        return mus.getZip(ms, (mu, m) -> m / (mu * (m - mu)));
+    Matrix linkFuncDiff(Matrix mus)
+    {
+        mus = mus.zipMatrix(ms, Binomial::muNormalisation);
+        return mus.zipMatrix(ms, (mu, m) -> m / (mu * (m - mu)));
     }
 
 
-    /*
-     * Calculates the expected value vector using the link function inverse.
-     *
-     * Uses logistic function as link function.
-     * mu = g^(-1)(eta) = m / (1 + e^(-eta)).
-     *
-     * @param etas Current eta vector.
-     *                 eta = g(mu) = X * beta
-     * @return Expected value vector.
+    /**
+     * Calculates the current expected value of each observation (`mus`) from
+       the current linear predictor of each observation (`etas`) using the link
+       function inverse
+
+     * `mus = g^(-1)(etas) = ms / (1 + e^(-etas))`
+
+     * @param etas
+         * Current linear predictor of each observation
+         * `etas = xs * betas`
+     * @return
+         * Current expected value of each observation (`mus`)
      */
-    Matrix linkFuncInv(Matrix etas) {
-        return etas.getZip(ms, (eta, m) -> m / (1 + Math.exp(-eta)));
+    Matrix linkFuncInv(final Matrix etas)
+    {
+        return etas.zipMatrix(ms, (eta, m) -> m / (1 + Math.exp(-eta)));
     }
 
 
-    /*
-     * Calculates the result of variance function.
-     *
-     * Uses logistic function as link function.
-     * v(mu) = b''(b'^(-1)(mu)) = mu * (1 - mu / m).
-     * `mus` is normalised to prevent a zero division error.
-     *
-     * @param mus Current expected value vector.
-     * @return Result of variance function.
+    /**
+     * Calculates the current variance function from the current expected value
+       of each observation (`mus`)
+
+     * Variance function is the effect of an expected value on its observation's
+       variance
+     * `v(mus) = b''(b'^(-1)(mus)) = mus * (1 - mus / ms)`
+     * Expected values in `mus` are normalised to prevent zero division errors
+
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current value of the variance function
      */
-    Matrix varFunc(Matrix mus) {
-        mus = mus.getZip(ms, Binomial::muNormalisation);
-        return mus.getZip(ms, (mu, m) -> mu * (1 - mu / m));
+    Matrix varFunc(Matrix mus)
+    {
+        mus = mus.zipMatrix(ms, Binomial::muNormalisation);
+        return mus.zipMatrix(ms, (mu, m) -> mu * (1 - mu / m));
     }
 
 
-    /*
-     * Calculates the log likelihood.
-     *
-     * Uses logistic function as link function.
-     * The combinations component is included even though it cancels out when comparing log likelihoods.
-     * logLike = y * log(p) + (m - y) * log(1 - p) + log(m C y).
-     *
-     * @param ys Response vector.
-     * @param mus Expected values vector.
-     * @return Log likelihood.
+    /**
+     * Calculates the current log-likelihood of the current model parameters
+
+     * `logLike = sum(ys * log_e(ps) + (ms - ys) * log_e(qs) + C)`
+         * `ps = mus / ms`
+         * `qs = 1 - ps`
+         * `C = log_e(C(ms, ys))`
+     * Constant term (`C`) is included even though it cancels out when comparing
+       log-likelihoods
+
+     * @param ys
+         * Response vector
+         * Number of successes per observation
+     * @param mus
+         * Current expected value of each observation
+     * @return
+         * Current log-likelihood
      */
-    double logLike(Matrix ys, Matrix mus) {
+    double logLike(
+        final Matrix ys ,
+        final Matrix mus)
+    {
+        final Matrix ps, pLogs, qLogs;
+        final Matrix qCounts;
+        final Matrix pLogProbs, qLogProbs, combinationLogs;
+        Matrix logProbs;
 
-        Matrix ps = mus.getZip(ms, (mu, m) -> mu / m);
+        // * Calculate the log probabilities of success (p) and failure (q)
+        ps = mus.zipMatrix(ms, (mu, m) -> mu / m);
+        pLogs = ps.mapMatrix(Math::log);
+        qLogs = ps.mapMatrix(p -> Math.log(1 - p));
 
-        // calculate the log probabilities of success and failure
-        Matrix psLog = ps.getMap(Math::log);
-        Matrix qsLog = ps.getMap(p -> Math.log(1 - p));
+        // * Calculate the number of failures per observation
+        // * `ys` is the number of success per observation
+        qCounts = ms.zipMatrix(ys, (m, y) -> m - y);
 
-        // calculate log components of the log likelihood
-        Matrix successLogProbs = ys.getZip(psLog, (y, p) -> y * p);
-        Matrix failureLogProbs = ms.getZip(ys, (m, y) -> m - y).getZip(qsLog, (mMinusY, q) -> mMinusY * q);
-        Matrix combinationLogs = ms.getZip(ys, (m, y) -> Math.log(Binomial.combinations(m.intValue(), y.intValue())));
+        // * Calculate components of the log-likelihood
+        pLogProbs = ys.zipMatrix(pLogs, (y, pLog) -> y * pLog);
+        qLogProbs = qCounts.zipMatrix(qLogs, (qCount, qLog) -> qCount * qLog);
+        combinationLogs = ms.zipMatrix(ys, Binomial::logCombinations);
 
-        Matrix logProbs = successLogProbs.getZip(failureLogProbs, Double::sum).getZip(combinationLogs, Double::sum);
+        // * Sum all log-likelihood components above together
+        logProbs = pLogProbs.zipMatrix(qLogProbs, Double::sum);
+        logProbs = logProbs.zipMatrix(combinationLogs, Double::sum);
 
-        // sum the log probabilities for each observation
-        return logProbs.getFoldVec(Double::sum, 0.0);
+        // * Sum the log probabilities for each observation
+        return logProbs.foldVec(Double::sum, 0.0);
     }
 
 
-    /*
-     * Prevents `mu` (expected value) from being zero or `m`.
-     *
-     * Although an observation can technically be zero or `m` it can cause issues (zero division) for the model.
-     *
-     * @param mu Expected value for an observation.
-     * @param m Number of trails for an observation.
-     * @return Normalised `mu`.
+    /**
+     * Prevents the current expected value of an observation (`mu`) from being
+       `0` or `m`
+
+     * Although an expected value can technically be `0` or `m` it can cause
+       zero division errors
+
+     * @param mu
+         * Current expected value of an observation
+     * @param m
+         * Number of trails for an observation
+     * @return
+         * Normalised `mu`
      */
-    private static double muNormalisation(double mu, double m) {
-        // compare floats exactly as error only occurs when exactly these values
-        if (mu == 0) {
+    private static double muNormalisation(
+              double mu,
+        final double m )
+    {
+        // * Compare floats exactly as the error only occurs when exactly `0`
+        //   or `m`
+        if (mu == 0)
+        {
             mu += NORMALISATION_EPSILON;
-        } else if (mu == m) {
+        }
+        else if (mu == m)
+        {
             mu -= NORMALISATION_EPSILON;
         }
 
@@ -167,29 +238,58 @@ public class Binomial extends Distribution {
     }
 
 
-    /*
-     * Calculates the number of combinations (binomial coefficient) for the given `total` and `sample` size.
-     *
-     * @param total Number of object that can be sampled.
-     * @param samples Number of object to sample.
-     * @return Number of different combinations that can be sampled.
-     * @throws ArithmeticException Must satisfy: `0 <= sample <= total`.
+    /**
+     * Calculates the log_e of the number of different combinations (binomial
+       coefficient)
+
+     * @param total
+         * Number of objects that can be sampled
+     * @param samples
+         * Number of objects to sample
+     * @return
+         * Log_e of the number of different combinations that can be sampled
+     * @throws ArithmeticException
+         * `total` and `samples` must be non-negative
+         * `total > 0`
+         * `samples > 0`
+     * @throws ArithmeticException
+         * `samples` cannot be larger than `total`
+         * `samples > total`
      */
-    private static long combinations(int total, int samples) throws ArithmeticException {
+    private static double logCombinations(
+        final double total  ,
+        final double samples)
+    throws ArithmeticException
+    {
+        int i, j;
+        long result;
 
-        if (total < 0 || samples < 0) {
-            throw new ArithmeticException("Total and sample size must be non-negative (>= 0).");
+        if (total < 0 || samples < 0)
+        {
+            throw new ArithmeticException(
+                "\n\n"
+                + "* `total` and `samples` must be non-negative\n"
+                + "* `total = " + total + "`\n"
+                + "* `samples = " + samples + "`\n"
+            );
         }
 
-        if (samples > total) {
-            throw new ArithmeticException("Sample size cannot be larger than total.");
+        if (samples > total)
+        {
+            throw new ArithmeticException(
+                "\n\n"
+                + "* `samples` cannot be larger than `total`\n"
+                + "* `total = " + total + "`\n"
+                + "* `samples = " + samples + "`\n"
+            );
         }
 
-        long result = 1;
-        for (int i = 1, j = total; i <= samples; i++, j--) {
+        result = 1;
+        for (i = 1, j = (int) total; i <= samples; i += 1, j -= 1)
+        {
             result = (result * j) / i;
         }
 
-        return result;
+        return Math.log(result);
     }
 }
